@@ -229,6 +229,45 @@ class Audio:
 
         return remove_dc(self)
 
+    def trim_silence(
+        self, top_db: float = 60.0, frame_length: int = 2048, hop_length: int = 512
+    ) -> Audio:
+        """Remove leading/trailing silence, like ``librosa.effects.trim``."""
+        from sonarch.ops.time import trim_silence
+
+        return trim_silence(self, top_db, frame_length, hop_length)
+
+    def pad(self, start: float = 0.0, end: float = 0.0) -> Audio:
+        """Add ``start`` / ``end`` seconds of silence."""
+        from sonarch.ops.time import pad
+
+        return pad(self, start, end)
+
+    def crop(self, start: float = 0.0, end: float | None = None) -> Audio:
+        """Keep the audio between ``start`` and ``end`` seconds."""
+        from sonarch.ops.time import crop
+
+        return crop(self, start, end)
+
+    def fix_length(
+        self, seconds: float, mode: Literal["pad_or_crop", "pad", "crop"] = "pad_or_crop"
+    ) -> Audio:
+        """Pad and/or crop the end to exactly ``seconds``."""
+        from sonarch.ops.time import fix_length
+
+        return fix_length(self, seconds, mode)
+
+    def chunk(
+        self,
+        seconds: float,
+        hop: float | None = None,
+        last: Literal["pad", "keep", "drop"] = "pad",
+    ) -> list[Audio]:
+        """Split into ``seconds``-long windows every ``hop`` seconds."""
+        from sonarch.ops.time import chunk
+
+        return chunk(self, seconds, hop, last)
+
     def resample(
         self, sample_rate: int, *, quality: Literal["fast", "high", "best"] = "high"
     ) -> Audio:
