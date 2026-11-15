@@ -22,7 +22,7 @@ use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 
-use crate::dsp::{Kernel, Quality, mixdown, resample_planar};
+use crate::dsp::{Kernel, Quality, integrated_loudness, mixdown, resample_planar};
 
 create_exception!(
     _core,
@@ -339,10 +339,27 @@ fn resample<'py>(
     Ok(array.into_pyarray(py))
 }
 
+/// Integrated loudness (LUFS, ITU-R BS.1770-4) of a C-contiguous float32
+/// array of shape (channels, frames).
+#[pyfunction]
+fn loudness(py: Python<'_>, array: PyReadonlyArray2<'_, f32>, sample_rate: u32) -> PyResult<f64> {
+    if sample_rate == 0 {
+        return Err(PyValueError::new_err("sample_rate must be positive"));
+    }
+    let shape = array.shape();
+    let (channels, frames) = (shape[0], shape[1]);
+    let samples = array
+        .as_slice()
+        .map_err(|_| PyValueError::new_err("array must be C-contiguous"))?;
+    py.detach(|| integrated_loudness(samples, channels, frames, sample_rate))
+        .map_err(PyValueError::new_err)
+}
+
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decode, m)?)?;
     m.add_function(wrap_pyfunction!(resample, m)?)?;
+    m.add_function(wrap_pyfunction!(loudness, m)?)?;
     m.add_function(wrap_pyfunction!(decode_many, m)?)?;
     m.add("UnsupportedError", m.py().get_type::<UnsupportedError>())?;
     m.add("NativeDecodeError", m.py().get_type::<NativeDecodeError>())?;

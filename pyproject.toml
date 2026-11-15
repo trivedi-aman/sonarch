@@ -39,6 +39,7 @@ dev = [
     "soundfile>=0.12",
     "librosa>=0.10",
     "torchaudio>=2.1",
+    "pyloudnorm>=0.1",
     "maturin>=1.9,<2",
 ]
 

@@ -184,6 +184,51 @@ class Audio:
             tensor = tensor.float()
         return tensor.numpy()
 
+    @property
+    def peak(self) -> float:
+        """Largest absolute sample value (linear; 1.0 = 0 dBFS)."""
+        from sonarch.ops.level import peak
+
+        return peak(self)
+
+    @property
+    def rms(self) -> float:
+        """Root-mean-square level across all channels (linear)."""
+        from sonarch.ops.level import rms
+
+        return rms(self)
+
+    @property
+    def loudness(self) -> float:
+        """Integrated loudness in LUFS (ITU-R BS.1770-4), computed on access."""
+        from sonarch.ops.level import loudness
+
+        return loudness(self)
+
+    def peak_normalize(self, target_db: float = 0.0) -> Audio:
+        """Scale so the peak is at ``target_db`` dBFS."""
+        from sonarch.ops.level import peak_normalize
+
+        return peak_normalize(self, target_db)
+
+    def rms_normalize(self, target_db: float = -20.0) -> Audio:
+        """Scale so the RMS level is ``target_db`` dBFS."""
+        from sonarch.ops.level import rms_normalize
+
+        return rms_normalize(self, target_db)
+
+    def loudness_normalize(self, target_lufs: float = -23.0) -> Audio:
+        """Scale to ``target_lufs`` integrated loudness (EBU R128 default: -23)."""
+        from sonarch.ops.level import loudness_normalize
+
+        return loudness_normalize(self, target_lufs)
+
+    def remove_dc(self) -> Audio:
+        """Subtract each channel's mean (DC offset)."""
+        from sonarch.ops.level import remove_dc
+
+        return remove_dc(self)
+
     def resample(
         self, sample_rate: int, *, quality: Literal["fast", "high", "best"] = "high"
     ) -> Audio:

@@ -12,6 +12,7 @@ def decode(path: str, max_seconds: float | None = None) -> tuple[NDArray[np.floa
 def resample(
     array: NDArray[np.float32], orig_rate: int, new_rate: int, quality: str = "high"
 ) -> NDArray[np.float32]: ...
+def loudness(array: NDArray[np.float32], sample_rate: int) -> float: ...
 def decode_many(
     paths: list[str],
     max_seconds: float | None = None,
