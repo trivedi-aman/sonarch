@@ -21,6 +21,16 @@ def signal() -> np.ndarray:
     return x
 
 
+def _per_channel(fn: object, x: np.ndarray) -> np.ndarray:
+    """Run a librosa function on each channel separately.
+
+    librosa >= 1.0 applies top_db per channel for multichannel input, while
+    0.x (the newest on Python 3.10/3.11) uses the global peak. Mono calls
+    behave the same in both, and match sonarch's per-channel behaviour.
+    """
+    return np.stack([fn(channel) for channel in x])  # type: ignore[operator]
+
+
 def _close(ours: torch.Tensor, ref: np.ndarray, rel: float = 1e-5) -> None:
     out = ours.numpy()
     assert out.shape == ref.shape
@@ -61,7 +71,10 @@ def test_melspectrogram(signal: np.ndarray, kwargs: dict[str, object]) -> None:
 
 @pytest.mark.parametrize("top_db", [80.0, 40.0, None])
 def test_log_mel(signal: np.ndarray, top_db: float | None) -> None:
-    ref = librosa.power_to_db(librosa.feature.melspectrogram(y=signal, sr=22_050), top_db=top_db)
+    def reference(y: np.ndarray) -> np.ndarray:
+        return librosa.power_to_db(librosa.feature.melspectrogram(y=y, sr=22_050), top_db=top_db)
+
+    ref = _per_channel(reference, signal)
     ours = sa.LogMel(top_db=top_db)(sa.Audio(signal, 22_050)).numpy()
     # Without a floor, very quiet bins are float32 rounding noise; compare
     # everything within 80 dB (librosa's default floor) of each channel's peak.
@@ -73,7 +86,7 @@ def test_log_mel(signal: np.ndarray, top_db: float | None) -> None:
     "kwargs", [{}, {"n_mfcc": 13}, {"n_mfcc": 13, "lifter": 22}, {"n_mfcc": 40, "n_mels": 40}]
 )
 def test_mfcc(signal: np.ndarray, kwargs: dict[str, object]) -> None:
-    ref = librosa.feature.mfcc(y=signal, sr=22_050, **kwargs)  # type: ignore[arg-type]
+    ref = _per_channel(lambda y: librosa.feature.mfcc(y=y, sr=22_050, **kwargs), signal)
     ours = sa.MFCC(**kwargs)(sa.Audio(signal, 22_050)).numpy()  # type: ignore[arg-type]
     assert ours.shape == ref.shape
     assert np.abs(ours - ref).max() < 1e-2

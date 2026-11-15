@@ -204,7 +204,8 @@ def power_to_db(
     spec: torch.Tensor, ref: float = 1.0, amin: float = 1e-10, top_db: float | None = 80.0
 ) -> torch.Tensor:
     """``10 * log10(spec / ref)``, floored at ``amin`` and, if ``top_db`` is set,
-    at ``top_db`` below each channel's peak. Matches ``librosa.power_to_db``."""
+    at ``top_db`` below each channel's peak. Matches ``librosa.power_to_db``
+    (librosa >= 1.0; librosa 0.x used the global peak for multichannel input)."""
     if amin <= 0:
         raise ValueError(f"amin must be > 0, got {amin}")
     db = 10.0 * torch.log10(spec.clamp(min=amin)) - 10.0 * math.log10(max(amin, abs(ref)))
