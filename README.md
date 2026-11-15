@@ -83,6 +83,7 @@ audio.duration        # 12.4 (seconds)
 audio.loudness        # -18.2 (LUFS, computed on first access)
 
 audio = audio.resample(16_000).to_mono().to("cuda")
+audio = sa.load("clip.flac", sample_rate=16_000, mono=True)   # same, in one step
 audio.tensor          # torch.Tensor, shape (channels, samples)
 audio.numpy()         # np.ndarray
 
@@ -104,8 +105,19 @@ sa.mix(a, b.resample(16_000), align="pad")   # ✅ explicit, pads the shorter cl
 from pathlib import Path
 
 clips = sa.load_many(sorted(Path("dataset/").glob("**/*.flac")))  # parallel, in Rust
+clips = sa.load_many(paths, sample_rate=16_000, mono=True)        # decode + downmix + resample
 clips = sa.load_many(paths, duration=5.0, num_threads=8)          # first 5 s of each
 ```
+
+### Resample ✅
+
+```python
+audio.resample(16_000)                   # quality="high" (default)
+audio.resample(16_000, quality="fast")   # torchaudio's default filter
+audio.resample(16_000, quality="best")   # librosa's former kaiser_best
+```
+
+Band-limited sinc resampling with the same filter design as `torchaudio.functional.resample`, so results match torchaudio to float32 precision. CPU audio is resampled in Rust; CUDA/MPS tensors use an identical PyTorch implementation and stay on the GPU.
 
 `sa.load` is also safe to call from your own threads or a PyTorch `DataLoader`: the engine releases the GIL while decoding.
 
@@ -132,7 +144,21 @@ One 60 s stereo 48 kHz file, ms per file (lower is better):
 | FLAC | **0.196** | 1.346 | 0.247 |
 | MP3 | 0.188 | 0.809 | **0.158** |
 
-Measured on an Apple Silicon laptop (8 cores), Python 3.12. MP3 is the one gap: soundfile uses mpg123, a hand-optimized C decoder. Reproduce with `python benchmarks/bench_load.py --files 300`.
+Resampling 60 s of stereo audio, ms (lower is better):
+
+| Ratio | sonarch (`high`) | torchaudio (same filter) | librosa (soxr_hq) |
+|---|---|---|---|
+| 44.1 kHz → 16 kHz | **7.7** | 23.7 | 14.4 |
+| 48 kHz → 16 kHz | **6.5** | 165.4 | 13.7 |
+| 44.1 kHz → 48 kHz | **16.7** | 25.2 | 29.4 |
+
+Load + mono + resample to 16 kHz, 300 FLAC files × 5 s (44.1 kHz), seconds:
+
+| `sa.load_many(..., sample_rate=16_000, mono=True)` | librosa, one by one | librosa, 8 threads |
+|---|---|---|
+| **0.39** | 2.14 | 0.44 |
+
+Measured on an Apple Silicon laptop (8 cores), Python 3.12. MP3 decoding is the one gap: soundfile uses mpg123, a hand-optimized C decoder. Reproduce with `python benchmarks/bench_load.py --files 300` and `python benchmarks/bench_resample.py --files 300`.
 
 ### Build a pipeline 🚧
 
@@ -206,7 +232,7 @@ Numerical ops are tested against librosa / torchaudio so outputs match within to
 ### 2. Preprocessing ops
 | Category | Ops | Status |
 |---|---|---|
-| Format | `Resample`, `ToMono`, `ToStereo`, `ChangeDtype` | 🚧 |
+| Format | `Resample` ✅, `ToMono` ✅, `ToStereo` ✅, `ChangeDtype` | 🚧 |
 | Level | `PeakNorm`, `RMSNorm`, `LoudnessNorm` (EBU R128 / LUFS), `DCRemove` | 🚧 |
 | Time | `TrimSilence`, `FixLength`, `Pad`, `Crop`, `Chunk` | 🚧 |
 | Time | `VAD` | 📋 |

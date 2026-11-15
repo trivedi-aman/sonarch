@@ -15,6 +15,7 @@ import torch
 from sonarch.core.audio import Audio
 from sonarch.core.errors import DecodeError
 from sonarch.io._source import Source, _is_url, describe, first_audio_stream, open_input
+from sonarch.ops.resample import QUALITIES, Quality, resample
 
 try:
     from sonarch import _core
@@ -41,12 +42,16 @@ def load(
     *,
     offset: float = 0.0,
     duration: float | None = None,
+    sample_rate: int | None = None,
+    mono: bool = False,
+    quality: Quality = "high",
     backend: Backend = "auto",
 ) -> Audio:
     """Decode an audio file into an :class:`~sonarch.Audio` object.
 
-    Audio keeps its original sample rate and channels; nothing is converted
-    behind your back. Use ``.resample()`` / ``.to_mono()`` explicitly.
+    By default audio keeps its original sample rate and channels. Pass
+    ``sample_rate=`` / ``mono=True`` to convert while loading (the same as
+    calling ``.to_mono().resample(...)`` afterwards, just in one step).
 
     Args:
         source: Local path, URL (``http(s)://``...), or binary file object.
@@ -54,6 +59,9 @@ def load(
             video files.
         offset: Start reading this many seconds into the file.
         duration: Read at most this many seconds. ``None`` reads to the end.
+        sample_rate: Resample to this rate in Hz. ``None`` keeps the file's rate.
+        mono: Average all channels into one.
+        quality: Resampling quality: ``"fast"``, ``"high"`` (default) or ``"best"``.
         backend: ``"auto"`` (default) uses the fast Rust engine for local
             WAV/AIFF/FLAC/MP3/Vorbis files and FFmpeg for everything else.
             ``"native"`` requires the Rust engine; ``"ffmpeg"`` always uses
@@ -65,14 +73,15 @@ def load(
     Raises:
         FileNotFoundError: A local path does not exist.
         DecodeError: The input is not decodable audio.
-        ValueError: ``offset`` / ``duration`` are invalid, or ``offset`` is
-            past the end of the file.
+        ValueError: An argument is invalid, or ``offset`` is past the end of
+            the file.
 
     Example:
-        >>> audio = sa.load("speech.mp3", offset=1.5, duration=3.0)
+        >>> audio = sa.load("speech.mp3", sample_rate=16_000, mono=True)
     """
-    _validate(offset, duration, backend)
+    _validate(offset, duration, backend, sample_rate, quality)
 
+    audio: Audio | None = None
     if backend != "ffmpeg":
         path = _native_candidate(source, offset)
         if path is None and backend == "native":
@@ -83,30 +92,39 @@ def load(
         if path is not None:
             try:
                 array, rate = _core.decode(path, duration)
-                return _to_audio(array, rate)
+                audio = _to_audio(array, rate)
             except (_core.UnsupportedError, _core.NativeDecodeError) as exc:
                 if backend == "native":
                     raise DecodeError(f"native engine failed on {path!r}: {exc}") from exc
                 # FFmpeg handles more edge cases; let it try.
 
-    return _load_ffmpeg(source, offset, duration)
+    if audio is None:
+        audio = _load_ffmpeg(source, offset, duration)
+    return _convert(audio, sample_rate, mono, quality)
 
 
 def load_many(
     sources: Sequence[str | os.PathLike[str]],
     *,
     duration: float | None = None,
+    sample_rate: int | None = None,
+    mono: bool = False,
+    quality: Quality = "high",
     num_threads: int | None = None,
 ) -> list[Audio]:
-    """Decode many files in parallel, using every CPU core.
+    """Decode (and optionally resample) many files in parallel on every core.
 
-    Decoding runs in Rust with Python's GIL released, so this scales with
-    cores instead of being stuck on one. Files the engine doesn't handle
-    (AAC, Opus...) are decoded with FFmpeg instead, transparently.
+    Each worker thread decodes, downmixes and resamples a file entirely in
+    Rust with Python's GIL released, so this scales with cores instead of
+    being stuck on one. Files the engine doesn't handle (AAC, Opus...) are
+    decoded with FFmpeg instead, transparently, and converted the same way.
 
     Args:
         sources: Local file paths.
         duration: Read at most this many seconds of each file.
+        sample_rate: Resample every file to this rate in Hz.
+        mono: Average all channels into one.
+        quality: Resampling quality: ``"fast"``, ``"high"`` (default) or ``"best"``.
         num_threads: Worker threads. ``None`` uses one per CPU core.
 
     Returns:
@@ -117,9 +135,9 @@ def load_many(
         DecodeError: A file could not be decoded by either engine.
 
     Example:
-        >>> clips = sa.load_many(sorted(Path("data").glob("*.flac")))
+        >>> clips = sa.load_many(paths, sample_rate=16_000, mono=True)
     """
-    _validate(0.0, duration, "auto")
+    _validate(0.0, duration, "auto", sample_rate, quality)
     if num_threads is not None and num_threads < 1:
         raise ValueError(f"num_threads must be >= 1, got {num_threads}")
 
@@ -131,24 +149,52 @@ def load_many(
     results: list[Audio | None] = [None] * len(paths)
     native = [i for i, p in enumerate(paths) if _native_candidate(p, 0.0) is not None]
     if native:
-        decoded = _core.decode_many([paths[i] for i in native], duration, num_threads)
+        decoded = _core.decode_many(
+            [paths[i] for i in native],
+            duration,
+            num_threads,
+            sample_rate,
+            mono,
+            quality,
+        )
         for i, item in zip(native, decoded, strict=True):
             if item[0] is not None:
                 results[i] = _to_audio(item[0], item[1])
 
     for i, audio in enumerate(results):
         if audio is None:
-            results[i] = _load_ffmpeg(paths[i], 0.0, duration)
+            results[i] = _convert(_load_ffmpeg(paths[i], 0.0, duration), sample_rate, mono, quality)
     return [audio for audio in results if audio is not None]
 
 
-def _validate(offset: float, duration: float | None, backend: str) -> None:
+def _convert(audio: Audio, sample_rate: int | None, mono: bool, quality: Quality) -> Audio:
+    # Downmix first: resampling one channel is cheaper than resampling several.
+    if mono:
+        audio = audio.to_mono()
+    if sample_rate is not None:
+        audio = resample(audio, sample_rate, quality=quality)
+    return audio
+
+
+def _validate(
+    offset: float,
+    duration: float | None,
+    backend: str,
+    sample_rate: int | None = None,
+    quality: str = "high",
+) -> None:
     if not math.isfinite(offset) or offset < 0:
         raise ValueError(f"offset must be a finite number >= 0, got {offset}")
     if duration is not None and (not math.isfinite(duration) or duration <= 0):
         raise ValueError(f"duration must be a finite number > 0 or None, got {duration}")
     if backend not in ("auto", "native", "ffmpeg"):
         raise ValueError(f"backend must be 'auto', 'native' or 'ffmpeg', got {backend!r}")
+    if sample_rate is not None and (
+        isinstance(sample_rate, bool) or not isinstance(sample_rate, int) or sample_rate <= 0
+    ):
+        raise ValueError(f"sample_rate must be a positive integer or None, got {sample_rate!r}")
+    if quality not in QUALITIES:
+        raise ValueError(f"quality must be 'fast', 'high' or 'best', got {quality!r}")
 
 
 def _native_candidate(source: Source, offset: float) -> str | None:

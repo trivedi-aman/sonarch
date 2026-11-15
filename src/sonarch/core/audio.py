@@ -184,6 +184,18 @@ class Audio:
             tensor = tensor.float()
         return tensor.numpy()
 
+    def resample(
+        self, sample_rate: int, *, quality: Literal["fast", "high", "best"] = "high"
+    ) -> Audio:
+        """Resample to ``sample_rate`` Hz. See :func:`sonarch.ops.resample`.
+
+        Runs in the Rust engine for CPU float32 audio and in PyTorch on GPU.
+        Returns ``self`` if the rate already matches.
+        """
+        from sonarch.ops.resample import resample
+
+        return resample(self, sample_rate, quality=quality)
+
     def to_mono(self) -> Audio:
         """Average all channels into one. Mono audio is returned unchanged."""
         if self.channels == 1:

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "sonarch"
-version = "0.1.0.dev0"
+version = "0.1.0.dev1"
 description = "The one import you need for audio work: loading, preprocessing, features, codecs and datasets, ready for ML."
 readme = "README.md"
 license = "MIT"
@@ -38,6 +38,7 @@ dev = [
     "mypy>=1.11",
     "soundfile>=0.12",
     "librosa>=0.10",
+    "torchaudio>=2.1",
     "maturin>=1.9,<2",
 ]
 
@@ -59,6 +60,10 @@ extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# Benchmarks build closures in loops and call them immediately.
+"benchmarks/*" = ["B023", "E501"]
 
 [tool.mypy]
 python_version = "3.10"

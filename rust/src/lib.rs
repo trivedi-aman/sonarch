@@ -3,13 +3,16 @@
 //! Decoding runs entirely in Rust (Symphonia) with the GIL released, so
 //! several files can be decoded truly in parallel.
 
+mod dsp;
+
 use std::fs::File;
 use std::path::Path;
 
 use numpy::ndarray::Array2;
-use numpy::{IntoPyArray, PyArray2};
+use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use rayon::prelude::*;
 use symphonia::core::codecs::audio::AudioDecoderOptions;
@@ -18,6 +21,8 @@ use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
+
+use crate::dsp::{Kernel, Quality, mixdown, resample_planar};
 
 create_exception!(
     _core,
@@ -194,6 +199,37 @@ fn decode_file(path: &str, max_seconds: Option<f64>) -> Result<Decoded, Failure>
     })
 }
 
+/// Optional per-file processing done inside the worker thread.
+#[derive(Clone, Copy)]
+struct Post {
+    mono: bool,
+    target_rate: Option<u32>,
+    quality: Quality,
+}
+
+fn parse_quality(name: &str) -> PyResult<Quality> {
+    Quality::from_name(name).ok_or_else(|| {
+        PyValueError::new_err(format!(
+            "quality must be 'fast', 'high' or 'best', got {name:?}"
+        ))
+    })
+}
+
+fn postprocess(mut d: Decoded, post: Post) -> Decoded {
+    if post.mono && d.channels > 1 {
+        d.samples = mixdown(&d.samples, d.channels, d.frames);
+        d.channels = 1;
+    }
+    if let Some(rate) = post.target_rate.filter(|&r| r != d.sample_rate) {
+        let kernel = Kernel::new(d.sample_rate, rate, post.quality);
+        let (samples, frames) = resample_planar(&d.samples, d.channels, d.frames, &kernel);
+        d.samples = samples;
+        d.frames = frames;
+        d.sample_rate = rate;
+    }
+    d
+}
+
 fn to_numpy<'py>(py: Python<'py>, decoded: Decoded) -> PyResult<(Bound<'py, PyArray2<f32>>, u32)> {
     let array = Array2::from_shape_vec((decoded.channels, decoded.frames), decoded.samples)
         .map_err(|e| NativeDecodeError::new_err(e.to_string()))?;
@@ -222,17 +258,31 @@ fn decode<'py>(
 /// success, or `(None, error_kind, message)` where `error_kind` is
 /// `"unsupported"` or `"failed"`, so the caller can fall back per file.
 #[pyfunction]
-#[pyo3(signature = (paths, max_seconds=None, num_threads=None))]
+#[pyo3(signature = (
+    paths, max_seconds=None, num_threads=None, sample_rate=None, mono=false, quality="high"
+))]
+#[allow(clippy::too_many_arguments)]
 fn decode_many<'py>(
     py: Python<'py>,
     paths: Vec<String>,
     max_seconds: Option<f64>,
     num_threads: Option<usize>,
+    sample_rate: Option<u32>,
+    mono: bool,
+    quality: &str,
 ) -> PyResult<Vec<Bound<'py, PyAny>>> {
+    if sample_rate == Some(0) {
+        return Err(PyValueError::new_err("sample_rate must be positive"));
+    }
+    let post = Post {
+        mono,
+        target_rate: sample_rate,
+        quality: parse_quality(quality)?,
+    };
     let run = |paths: &[String]| -> Vec<Result<Decoded, Failure>> {
         paths
             .par_iter()
-            .map(|p| decode_file(p, max_seconds))
+            .map(|p| decode_file(p, max_seconds).map(|d| postprocess(d, post)))
             .collect()
     };
     let results = py.detach(|| match num_threads {
@@ -259,9 +309,40 @@ fn decode_many<'py>(
     Ok(out)
 }
 
+/// Resample a C-contiguous float32 array of shape (channels, frames).
+///
+/// Output length is ceil(frames * new_rate / orig_rate), matching torchaudio.
+#[pyfunction]
+#[pyo3(signature = (array, orig_rate, new_rate, quality="high"))]
+fn resample<'py>(
+    py: Python<'py>,
+    array: PyReadonlyArray2<'py, f32>,
+    orig_rate: u32,
+    new_rate: u32,
+    quality: &str,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    if orig_rate == 0 || new_rate == 0 {
+        return Err(PyValueError::new_err("sample rates must be positive"));
+    }
+    let quality = parse_quality(quality)?;
+    let shape = array.shape();
+    let (channels, frames) = (shape[0], shape[1]);
+    let samples = array
+        .as_slice()
+        .map_err(|_| PyValueError::new_err("array must be C-contiguous"))?;
+    let (out, out_frames) = py.detach(|| {
+        let kernel = Kernel::new(orig_rate, new_rate, quality);
+        resample_planar(samples, channels, frames, &kernel)
+    });
+    let array = Array2::from_shape_vec((channels, out_frames), out)
+        .map_err(|e| NativeDecodeError::new_err(e.to_string()))?;
+    Ok(array.into_pyarray(py))
+}
+
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decode, m)?)?;
+    m.add_function(wrap_pyfunction!(resample, m)?)?;
     m.add_function(wrap_pyfunction!(decode_many, m)?)?;
     m.add("UnsupportedError", m.py().get_type::<UnsupportedError>())?;
     m.add("NativeDecodeError", m.py().get_type::<NativeDecodeError>())?;
