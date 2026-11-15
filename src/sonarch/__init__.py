@@ -19,7 +19,7 @@ from sonarch.core import (
     SonarchError,
     mix,
 )
-from sonarch.io import AudioInfo, info, load, save
+from sonarch.io import AudioInfo, info, load, load_many, save
 
 try:
     __version__ = version("sonarch")
@@ -40,6 +40,7 @@ __all__ = [
     "__version__",
     "info",
     "load",
+    "load_many",
     "mix",
     "save",
 ]

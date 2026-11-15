@@ -50,6 +50,7 @@ sonarch gives you **one consistent API** for all of it. Where a great tool alrea
 5. **Small core, optional extras.** The core needs only PyTorch, NumPy and a bundled decoder. Codecs, augmentation and metrics are opt-in extras.
 6. **Fail loudly.** Invalid shapes, sample rates or configs raise clear errors, never silent corruption.
 7. **Wrap first, replace later.** sonarch builds on proven libraries where they exist and only reimplements where it can be clearly faster or more correct.
+8. **Fast where it counts.** Hot paths (decoding, batch loading, per-sample DSP) run in a Rust engine that releases Python's GIL and uses every core. Tensor maths runs in PyTorch on CPU or GPU. Every speed claim is backed by a benchmark in [`benchmarks/`](benchmarks/).
 
 ---
 
@@ -64,7 +65,7 @@ pip install sonarch[cloud]          # S3 / GCS / HTTP reading via fsspec
 pip install sonarch[all]            # everything
 ```
 
-Requires Python 3.10+ and PyTorch 2.x. Decoding uses bundled FFmpeg libraries (via PyAV), so **no system FFmpeg install is needed** on Linux, macOS or Windows.
+Requires Python 3.10+ and PyTorch 2.x. Prebuilt wheels for Linux, macOS and Windows include the Rust engine and bundled FFmpeg libraries (via PyAV), so **you don't need Rust or a system FFmpeg install**.
 
 ---
 
@@ -96,6 +97,42 @@ a, b = sa.load("a.wav"), sa.load("b_48k.wav")
 a + b                 # ❌ SampleRateMismatchError: 16000 Hz vs 48000 Hz
 sa.mix(a, b.resample(16_000), align="pad")   # ✅ explicit, pads the shorter clip
 ```
+
+### Load thousands of files on every core ✅
+
+```python
+from pathlib import Path
+
+clips = sa.load_many(sorted(Path("dataset/").glob("**/*.flac")))  # parallel, in Rust
+clips = sa.load_many(paths, duration=5.0, num_threads=8)          # first 5 s of each
+```
+
+`sa.load` is also safe to call from your own threads or a PyTorch `DataLoader`: the engine releases the GIL while decoding.
+
+---
+
+## Speed
+
+Local WAV, AIFF, FLAC, MP3 and Ogg Vorbis files are decoded by sonarch's Rust engine. Other formats (AAC/M4A, Opus, video) go through FFmpeg, and the two engines return the same samples (bit-exact for lossless formats). Pick one explicitly with `sa.load(..., backend="native" | "ffmpeg")`.
+
+One 60 s stereo 48 kHz file, ms per file (lower is better):
+
+| Format | sonarch | soundfile | librosa |
+|---|---|---|---|
+| WAV | **8.5** | 10.8 | 10.8 |
+| FLAC | **47.3** | 56.4 | 56.9 |
+| MP3 | 41.5 | **33.9** | 35.0 |
+| Opus | **102.8** | 347.6 | 308.6 |
+| M4A/AAC | 42.5 | not supported | not supported |
+
+300 files × 5 s, total seconds on 8 cores (lower is better):
+
+| Format | `sa.load_many` | soundfile, one by one | soundfile, 8 threads |
+|---|---|---|---|
+| FLAC | **0.196** | 1.346 | 0.247 |
+| MP3 | 0.188 | 0.809 | **0.158** |
+
+Measured on an Apple Silicon laptop (8 cores), Python 3.12. MP3 is the one gap: soundfile uses mpg123, a hand-optimized C decoder. Reproduce with `python benchmarks/bench_load.py --files 300`.
 
 ### Build a pipeline 🚧
 
@@ -157,9 +194,12 @@ Numerical ops are tested against librosa / torchaudio so outputs match within to
 ## Features
 
 ### 1. Loading & I/O 🚧
-- Decode WAV, FLAC, MP3, OGG/Opus, M4A/AAC, and audio tracks from video files
-- Save to WAV, FLAC and Opus
-- Fast metadata probing without decoding
+- ✅ Decode WAV, AIFF, FLAC, MP3, OGG (Vorbis/Opus), M4A/AAC, and audio tracks from video files
+- ✅ Rust decoding engine with automatic FFmpeg fallback
+- ✅ `sa.load_many`: parallel loading across all CPU cores
+- ✅ Read a slice with `offset=` / `duration=` (sample-exact, seeks instead of decoding everything)
+- ✅ Save to WAV (16/24/32-bit, float), FLAC (16/24-bit) and Opus
+- ✅ Fast metadata probing without decoding
 - Streaming / chunked reads for long files 📋
 - Read from URLs, S3 and GCS via `fsspec` (`sonarch[cloud]`) 📋
 
@@ -299,11 +339,14 @@ sonarch/
 │   ├── metrics/
 │   ├── cache/
 │   └── presets/              # YAML preset definitions
+├── rust/                     # native engine, built into sonarch._core
+│   ├── Cargo.toml
+│   └── src/lib.rs            # decoding (Symphonia), parallel batch loading (Rayon)
 ├── tests/
-├── benchmarks/               # speed vs. librosa / torchaudio
+├── benchmarks/               # speed vs. soundfile / librosa / torchaudio
 ├── docs/
 ├── examples/
-├── pyproject.toml
+├── pyproject.toml            # built with maturin
 └── README.md
 ```
 
@@ -311,18 +354,25 @@ sonarch/
 
 ## Development
 
+You need Python 3.10+ and a [Rust toolchain](https://rustup.rs) (stable).
+
 ```bash
 git clone https://github.com/trivedi-aman/sonarch.git
 cd sonarch
-pip install -e ".[dev,all]"
+pip install -e ".[dev]"            # compiles the Rust engine and installs the package
 pytest
+
+maturin develop --release          # rebuild after changing Rust code
+python benchmarks/bench_load.py    # speed check
 ```
 
 Conventions:
 - Type hints everywhere; `mypy --strict` on `sonarch/core`
-- Formatting and linting with `ruff`
+- Formatting and linting with `ruff` (Python) and `cargo fmt` / `cargo clippy` (Rust)
 - Every op needs: a unit test, a CPU/GPU parity test, and a YAML save/load round-trip test
 - Numerical ops are tested against a reference (librosa / torchaudio) within tolerance
+- Anything the Rust engine does must match the reference path (FFmpeg / PyTorch) in tests
+- Speed claims in this README come from `benchmarks/`; rerun them when touching hot paths
 
 ---
 

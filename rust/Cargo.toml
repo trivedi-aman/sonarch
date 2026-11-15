@@ -1,0 +1,18 @@
+[package]
+name = "sonarch_core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+numpy = "0.30.0"
+pyo3 = { version = "0.30.1", features = ["extension-module", "abi3-py310"] }
+rayon = "1.12.0"
+symphonia = { version = "0.6.1", features = ["all-codecs", "all-formats"] }
+
+[lib]
+name = "_core"
+crate-type = ["cdylib"]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1

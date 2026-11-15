@@ -12,3 +12,6 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
+rust/target/
+*.so
+*.pyd

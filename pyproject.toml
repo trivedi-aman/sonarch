@@ -1,6 +1,6 @@
 [build-system]
-requires = ["hatchling>=1.27"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
 
 [project]
 name = "sonarch"
@@ -38,14 +38,18 @@ dev = [
     "mypy>=1.11",
     "soundfile>=0.12",
     "librosa>=0.10",
+    "maturin>=1.9,<2",
 ]
 
 [project.urls]
 Homepage = "https://github.com/trivedi-aman/sonarch"
 Issues = "https://github.com/trivedi-aman/sonarch/issues"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/sonarch"]
+[tool.maturin]
+manifest-path = "rust/Cargo.toml"
+python-source = "src"
+module-name = "sonarch._core"
+profile = "release"
 
 [tool.ruff]
 line-length = 100
