@@ -10,8 +10,8 @@ audio = audio.resample(16_000).to_mono()
 mel   = sa.MelSpectrogram(n_mels=80)(audio)  # CPU or GPU, matches librosa within tolerance
 ```
 
-> ⚠️ **Status: early development.** This README describes the design target. Every feature section is tagged:
-> ✅ available · 🚧 in progress · 📋 planned. See the [Roadmap](#roadmap).
+> **Status: alpha (0.1).** Loading, resampling, levels, trimming and spectral features are available now; later milestones are described here as design targets. Every section is tagged
+> ✅ available · 🚧 in progress · 📋 planned. See the [Roadmap](#roadmap) and [Changelog](CHANGELOG.md).
 
 ---
 
@@ -57,12 +57,16 @@ sonarch gives you **one consistent API** for all of it. Where a great tool alrea
 ## Installation
 
 ```bash
-pip install sonarch                 # core: load/save, resample, normalize, trim, features
-pip install sonarch[augment]        # augmentation ops
-pip install sonarch[codecs]         # neural codecs (EnCodec, DAC, Mimi, SNAC)
-pip install sonarch[metrics]        # PESQ, STOI, SI-SDR
-pip install sonarch[cloud]          # S3 / GCS / HTTP reading via fsspec
-pip install sonarch[all]            # everything
+pip install sonarch                 # ✅ core: load/save, resample, levels, trim, features
+```
+
+Planned extras, added as their milestones ship:
+
+```bash
+pip install sonarch[codecs]         # 📋 neural codecs (EnCodec, DAC, Mimi, SNAC)
+pip install sonarch[augment]        # 📋 augmentation ops
+pip install sonarch[metrics]        # 📋 PESQ, STOI, SI-SDR
+pip install sonarch[cloud]          # 📋 S3 / GCS reading via fsspec
 ```
 
 Requires Python 3.10+ and PyTorch 2.x. Prebuilt wheels for Linux, macOS and Windows include the Rust engine and bundled FFmpeg libraries (via PyAV), so **you don't need Rust or a system FFmpeg install**.
@@ -348,7 +352,7 @@ Ops are automatically saved to YAML if their constructor arguments are plain typ
 
 | Milestone | Scope | Status |
 |---|---|---|
-| **v0.1: Core** | `sa.load` / `save` / `info` / `load_many`, `Audio` object, Rust engine, resample, mono/stereo, normalization and LUFS, trim, pad/crop, STFT / mel / MFCC matched to librosa, migration guides | ✅ Done |
+| **v0.1: Core** | `sa.load` / `save` / `info` / `load_many`, `Audio` object, Rust engine, resample, mono/stereo, normalization and LUFS, trim, pad/crop, STFT / mel / MFCC matched to librosa, migration guides | ✅ Released (0.1.0) |
 | **v0.2: ML-ready** | `Pipeline` + YAML, batched GPU execution with padding and masks, `whisper` / `wav2vec2` presets matched to Hugging Face feature extractors, benchmarks vs. librosa / torchaudio | 📋 Planned |
 | **v0.3: Codecs** | Unified `Codec` API: EnCodec, DAC, Mimi, SNAC | 📋 Planned |
 | **v0.4: Data** | `dataset.pack` / `stream`, FLAC/Opus shards, HF `datasets` support, cloud reading | 📋 Planned |
