@@ -71,7 +71,7 @@ Requires Python 3.10+ and PyTorch 2.x. Prebuilt wheels for Linux, macOS and Wind
 
 ## Quickstart
 
-### Load, inspect, convert 🚧
+### Load, inspect, convert ✅
 
 ```python
 import sonarch as sa
@@ -160,7 +160,22 @@ Load + mono + resample to 16 kHz, 300 FLAC files × 5 s (44.1 kHz), seconds:
 
 Measured on an Apple Silicon laptop (8 cores), Python 3.12. MP3 decoding is the one gap: soundfile uses mpg123, a hand-optimized C decoder. Reproduce with `python benchmarks/bench_load.py --files 300` and `python benchmarks/bench_resample.py --files 300`.
 
-### Build a pipeline 🚧
+### Clean up and extract features ✅
+
+```python
+audio = sa.load("speech.wav", sample_rate=16_000, mono=True)
+audio = audio.loudness_normalize(-23).trim_silence(top_db=30).fix_length(10.0)
+
+mel  = sa.MelSpectrogram(n_mels=80, n_fft=400, hop_length=160)(audio)  # (1, 80, frames)
+logm = sa.LogMel(n_mels=80)(audio)                                       # dB
+mfcc = sa.MFCC(n_mfcc=13)(audio)                                         # (1, 13, frames)
+```
+
+Features match librosa to float32 precision and run on whatever device the audio is on (`audio.to("cuda")`).
+
+### Build a pipeline 📋
+
+The op classes above become pipeline steps in v0.2:
 
 ```python
 pipe = sa.Pipeline([
@@ -204,22 +219,23 @@ features = pipe("speech.mp3")
 
 | You used to write | In sonarch |
 |---|---|
-| `librosa.load(path, sr=16000, mono=True)` | `sa.load(path).resample(16_000).to_mono()` |
+| `librosa.load(path, sr=16000, mono=True)` | `sa.load(path, sample_rate=16_000, mono=True)` |
 | `librosa.feature.melspectrogram(y=y, sr=sr, n_mels=80)` | `sa.MelSpectrogram(n_mels=80)(audio)` |
 | `librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)` | `sa.MFCC(n_mfcc=13)(audio)` |
 | `librosa.effects.trim(y, top_db=30)` | `audio.trim_silence(top_db=30)` |
 | `torchaudio.load(path)` | `sa.load(path)` |
 | `torchaudio.functional.resample(x, 44100, 16000)` | `audio.resample(16_000)` |
-| `torchaudio.compliance.kaldi.fbank(x, ...)` | `sa.Fbank(...)(audio)` |
-| `WhisperFeatureExtractor(...)(x)` | `sa.preset("whisper")(audio)` |
+| `torchaudio.compliance.kaldi.fbank(x, ...)` | `sa.Fbank(...)(audio)` 📋 |
+| `WhisperFeatureExtractor(...)(x)` | `sa.preset("whisper")(audio)` 📋 |
+| `pyloudnorm.Meter(sr).integrated_loudness(y)` | `audio.loudness` |
 
-Numerical ops are tested against librosa / torchaudio so outputs match within tolerance. Full migration guides: 📋 `docs/migrate-librosa.md`, `docs/migrate-torchaudio.md`.
+Numerical ops are tested against librosa / torchaudio / pyloudnorm so outputs match within tolerance. Full migration guides: [from librosa](docs/migrate-librosa.md) · [from torchaudio](docs/migrate-torchaudio.md).
 
 ---
 
 ## Features
 
-### 1. Loading & I/O 🚧
+### 1. Loading & I/O ✅
 - ✅ Decode WAV, AIFF, FLAC, MP3, OGG (Vorbis/Opus), M4A/AAC, and audio tracks from video files
 - ✅ Rust decoding engine with automatic FFmpeg fallback
 - ✅ `sa.load_many`: parallel loading across all CPU cores
@@ -232,12 +248,12 @@ Numerical ops are tested against librosa / torchaudio so outputs match within to
 ### 2. Preprocessing ops
 | Category | Ops | Status |
 |---|---|---|
-| Format | `Resample` ✅, `ToMono` ✅, `ToStereo` ✅, `ChangeDtype` | 🚧 |
-| Level | `PeakNorm`, `RMSNorm`, `LoudnessNorm` (EBU R128 / LUFS), `DCRemove` | 🚧 |
-| Time | `TrimSilence`, `FixLength`, `Pad`, `Crop`, `Chunk` | 🚧 |
+| Format | `resample` (fast / high / best), `to_mono`, `to_stereo`, `to(dtype)` | ✅ |
+| Level | `peak_normalize`, `rms_normalize`, `loudness_normalize` (EBU R128 / LUFS), `remove_dc`, `.loudness` / `.peak` / `.rms` | ✅ |
+| Time | `trim_silence` (librosa-exact), `fix_length`, `pad`, `crop`, `chunk` | ✅ |
 | Time | `VAD` | 📋 |
 | Filters | `HighPass`, `LowPass`, `BandPass`, `PreEmphasis` | 📋 |
-| Features | `STFT`, `MelSpectrogram`, `LogMel`, `MFCC` | 🚧 |
+| Features | `STFT`, `MelSpectrogram`, `LogMel`, `MFCC` (librosa-exact, CPU/GPU) | ✅ |
 | Features | `Fbank` (Kaldi-compatible), `CQT`, `Chroma` | 📋 |
 
 ### 3. Neural codecs and tokenization (`sonarch[codecs]`) 📋
@@ -332,7 +348,7 @@ Ops are automatically saved to YAML if their constructor arguments are plain typ
 
 | Milestone | Scope | Status |
 |---|---|---|
-| **v0.1: Core** | `sa.load` / `save` / `info`, `Audio` object, resample, mono/stereo, normalization, trim, pad/crop, STFT / mel / MFCC matched to librosa, migration guides | 🚧 In progress |
+| **v0.1: Core** | `sa.load` / `save` / `info` / `load_many`, `Audio` object, Rust engine, resample, mono/stereo, normalization and LUFS, trim, pad/crop, STFT / mel / MFCC matched to librosa, migration guides | ✅ Done |
 | **v0.2: ML-ready** | `Pipeline` + YAML, batched GPU execution with padding and masks, `whisper` / `wav2vec2` presets matched to Hugging Face feature extractors, benchmarks vs. librosa / torchaudio | 📋 Planned |
 | **v0.3: Codecs** | Unified `Codec` API: EnCodec, DAC, Mimi, SNAC | 📋 Planned |
 | **v0.4: Data** | `dataset.pack` / `stream`, FLAC/Opus shards, HF `datasets` support, cloud reading | 📋 Planned |
