@@ -7,6 +7,7 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
+from sonarch import ops
 from sonarch.core import (
     Audio,
     AudioValidationError,
@@ -20,6 +21,7 @@ from sonarch.core import (
     mix,
 )
 from sonarch.io import AudioInfo, info, load, load_many, save
+from sonarch.ops import MFCC, STFT, LogMel, MelSpectrogram
 
 try:
     __version__ = version("sonarch")
@@ -27,6 +29,8 @@ except PackageNotFoundError:  # running from a source tree without installing
     __version__ = "0.0.0+unknown"
 
 __all__ = [
+    "MFCC",
+    "STFT",
     "Audio",
     "AudioInfo",
     "AudioValidationError",
@@ -35,6 +39,8 @@ __all__ = [
     "DecodeError",
     "EncodeError",
     "LengthMismatchError",
+    "LogMel",
+    "MelSpectrogram",
     "SampleRateMismatchError",
     "SonarchError",
     "__version__",
@@ -42,5 +48,6 @@ __all__ = [
     "load",
     "load_many",
     "mix",
+    "ops",
     "save",
 ]
